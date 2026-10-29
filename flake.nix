@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -38,7 +38,7 @@
               pkgs.cargo
               pkgs.rustc
               pkgs.rustfmt
-              pkgs.cargo-clippy
+              pkgs.clippy
             ];
           };
       });
