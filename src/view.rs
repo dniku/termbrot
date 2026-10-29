@@ -45,13 +45,28 @@ impl View {
         self.imaginary_max - self.imaginary_min
     }
 
-    /// Zoom by `factor` about `center`, keeping `aspect` (width ÷ height).
+    /// Magnify by `magnification` about `center`, keeping `aspect` (width ÷ height).
     ///
-    /// Re-deriving both spans from the aspect ratio rather than scaling each
-    /// independently is what stops a window resize from stretching the set.
+    /// `magnification` is a magnification, so values above 1 show a smaller
+    /// region in more detail and the span is divided rather than multiplied.
+    /// Re-deriving the height from the aspect ratio, instead of scaling each
+    /// axis independently, is what stops a taller terminal from stretching the
+    /// set vertically.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `magnification` and `aspect` are both positive and finite.
     #[must_use = "zooming returns a new view; the receiver is unchanged"]
-    pub fn zoomed(&self, factor: f64, center: (f64, f64), aspect: f64) -> Self {
-        let new_width = self.width() * factor;
+    pub fn zoomed(&self, magnification: f64, center: (f64, f64), aspect: f64) -> Self {
+        assert!(
+            magnification.is_finite() && magnification > 0.0,
+            "magnification must be positive and finite, got {magnification}"
+        );
+        assert!(
+            aspect.is_finite() && aspect > 0.0,
+            "aspect must be positive and finite, got {aspect}"
+        );
+        let new_width = self.width() / magnification;
         let new_height = new_width / aspect;
         Self {
             real_min: center.0 - new_width / 2.0,
@@ -144,16 +159,28 @@ mod tests {
     }
 
     #[test]
-    fn zoom_shrinks_about_the_center() {
+    fn zoom_narrows_the_width_and_derives_height_from_the_aspect() {
         let view = View::FULL;
-        let center = (0.0, 0.0);
-        let zoomed = view.zoomed(0.5, center, 2.0);
-        assert!((zoomed.width() - view.width() * 0.5).abs() < 1e-12);
-        assert!(zoomed.real_min.abs() < 1e-12 && zoomed.real_max.abs() < 1e-12);
+        let zoomed = view.zoomed(2.0, (0.0, 0.0), 2.0);
         assert!(
-            (zoomed.width() / zoomed.height() - 2.0).abs() < 1e-9,
-            "aspect ratio must be preserved"
+            (zoomed.width() - view.width() / 2.0).abs() < 1e-12,
+            "a magnification of 2 must halve the width"
         );
+        assert!(
+            (zoomed.height() - zoomed.width() / 2.0).abs() < 1e-12,
+            "height follows from the requested aspect"
+        );
+        // Centered on the origin, so the real span straces zero symmetrically.
+        assert!((zoomed.real_min + zoomed.real_max).abs() < 1e-12);
+        assert!((zoomed.imaginary_min + zoomed.imaginary_max).abs() < 1e-12);
+        assert!(zoomed.real_min < 0.0 && zoomed.real_max > 0.0);
+    }
+
+    #[test]
+    fn zoom_moves_the_view_to_the_requested_center() {
+        let zoomed = View::FULL.zoomed(1.0, (1.0, 2.0), 1.0);
+        assert!((zoomed.real_min + zoomed.real_max - 2.0).abs() < 1e-12);
+        assert!((zoomed.imaginary_min + zoomed.imaginary_max - 4.0).abs() < 1e-12);
     }
 
     #[test]

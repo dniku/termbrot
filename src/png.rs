@@ -77,12 +77,14 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
     // CMF/FLG for deflate, 32 KiB window, no preset dictionary, FCHECK
     // adjusted so the two-byte header sums to a multiple of 31.
     let mut out = vec![0x78u8, 0x01];
-    if data.is_empty() {
-        // A single empty final block still has to be emitted.
-        out.extend_from_slice(&[0x01, 0x00, 0x00, 0xFF, 0xFF]);
-    }
-    for (offset, chunk) in data.chunks(MAX_BLOCK).enumerate() {
-        let is_last = offset + chunk.len() >= data.len();
+    // `chunks` yields nothing for an empty payload, so iterate over the blocks
+    // explicitly to guarantee exactly one final block in every case -- an empty
+    // image still needs the terminating block a decoder looks for.
+    let blocks = data.len().div_ceil(MAX_BLOCK).max(1);
+    for index in 0..blocks {
+        let start = index * MAX_BLOCK;
+        let chunk = &data[start..start + MAX_BLOCK.min(data.len() - start)];
+        let is_last = index + 1 == blocks;
         out.push(u8::from(is_last));
         let len = chunk.len() as u16;
         out.extend_from_slice(&len.to_le_bytes());
@@ -163,43 +165,103 @@ mod tests {
     }
 
     #[test]
-    fn zlib_stream_has_a_valid_header_and_trailer() {
-        let encoded = zlib_stored(b"hello world");
-        // CMF/FLG: low nibble 8 is deflate, and the 16-bit header must be a
-        // multiple of 31 for a conformant decoder.
-        assert_eq!(encoded[0] & 0x0F, 8);
-        let header = u16::from(encoded[0]) << 8 | u16::from(encoded[1]);
-        assert_eq!(header % 31, 0);
-        let trailer = encoded.len() - 4;
-        assert_eq!(
-            u32::from_be_bytes(encoded[trailer..].try_into().unwrap()),
-            adler32(b"hello world")
-        );
+    fn zlib_stream_round_trips_through_the_stored_decoder() {
+        for payload in [
+            b"".to_vec(),
+            b"h".to_vec(),
+            b"hello world".to_vec(),
+            (0u8..=255).collect::<Vec<u8>>(),
+        ] {
+            let encoded = zlib_stored(&payload);
+            // CMF/FLG: the 16-bit header must be a multiple of 31.
+            let header = u16::from(encoded[0]) << 8 | u16::from(encoded[1]);
+            assert_eq!(header % 31, 0, "zlib header for {} bytes", payload.len());
+            assert_eq!(stored_payload(&encoded), payload);
+        }
     }
 
     #[test]
-    fn blocks_are_chunked_at_the_deflate_limit() {
-        let payload = vec![7u8; MAX_BLOCK + 10];
+    fn payloads_larger_than_a_block_are_split_and_reassembled() {
+        // Anything over the 65 535-byte block limit needs a second block whose
+        // final-bit is set; the decoder walks both.
+        let payload: Vec<u8> = (0..MAX_BLOCK + 10_000)
+            .map(|index| (index % 251) as u8)
+            .collect();
         let encoded = zlib_stored(&payload);
-        // Header (2) + two block headers (5 each) + payload + adler (4).
-        assert_eq!(encoded.len(), 2 + 5 + MAX_BLOCK + 5 + 10 + 4);
-        // First block must not be final, second must be.
-        assert_eq!(encoded[2] & 1, 0);
-        assert_eq!(encoded[2 + 5 + MAX_BLOCK] & 1, 1);
+        assert_eq!(stored_payload(&encoded), payload);
+        assert!(encoded.len() > payload.len(), "stored blocks add framing");
+    }
+
+    /// Walk the chunk stream, returning each `(type, payload)` pair.
+    ///
+    /// Parsing the structure rather than asserting fixed offsets keeps these
+    /// tests meaningful when the payload size changes, and it validates the
+    /// length fields and CRCs the same way a decoder would.
+    fn chunks(data: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
+        assert_eq!(&data[..8], &SIGNATURE, "signature");
+        let mut at = 8;
+        let mut found = Vec::new();
+        while at < data.len() {
+            let length = u32::from_be_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+            let kind: [u8; 4] = data[at + 4..at + 8].try_into().unwrap();
+            let payload_start = at + 8;
+            let payload = data[payload_start..payload_start + length].to_vec();
+            let crc_start = payload_start + length;
+            let crc = u32::from_be_bytes(data[crc_start..crc_start + 4].try_into().unwrap());
+            let mut body = Vec::with_capacity(4 + length);
+            body.extend_from_slice(&kind);
+            body.extend_from_slice(&payload);
+            assert_eq!(crc32(&body), crc, "{:?} chunk CRC", std::str::from_utf8(&kind));
+            at = crc_start + 4;
+            found.push((kind, payload));
+        }
+        assert_eq!(at, data.len(), "trailing bytes after the last chunk");
+        found
     }
 
     #[test]
     fn encodes_a_minimal_image_with_the_right_chunk_order() {
         let mut out = Vec::new();
         encode(&mut out, 1, 1, &[10, 20, 30]).expect("encodes");
-        assert_eq!(&out[..8], &SIGNATURE);
-        assert_eq!(&out[12..16], b"IHDR");
-        let ihdr_len = u32::from_be_bytes(out[8..12].try_into().unwrap());
-        assert_eq!(ihdr_len, 13);
-        let idat_at = 12 + 13 + 4;
-        assert_eq!(&out[idat_at + 4..idat_at + 8], b"IDAT");
-        let end = out.len() - 12;
-        assert_eq!(&out[end + 4..end + 8], b"IEND");
+        let found = chunks(&out);
+        let kinds: Vec<&[u8; 4]> = found.iter().map(|(kind, _)| kind).collect();
+        assert_eq!(kinds, [b"IHDR", b"IDAT", b"IEND"]);
+
+        let ihdr = &found[0].1;
+        assert_eq!(ihdr.len(), 13);
+        assert_eq!(u32::from_be_bytes(ihdr[0..4].try_into().unwrap()), 1);
+        assert_eq!(u32::from_be_bytes(ihdr[4..8].try_into().unwrap()), 1);
+        assert_eq!(ihdr[8], 8, "bit depth");
+        assert_eq!(ihdr[9], 2, "colour type: truecolour");
+
+        // The pixel payload must survive the zlib framing intact.
+        let idat = &found[1].1;
+        assert_eq!(stored_payload(idat), vec![0, 10, 20, 30]);
+    }
+
+    /// Strip a zlib stream of stored blocks back to its raw bytes.
+    fn stored_payload(zlib: &[u8]) -> Vec<u8> {
+        assert_eq!(zlib[0] & 0x0F, 8, "compression method: deflate");
+        let mut at = 2;
+        let mut out = Vec::new();
+        loop {
+            let header = zlib[at];
+            let length = u16::from_le_bytes(zlib[at + 1..at + 3].try_into().unwrap());
+            let complement = u16::from_le_bytes(zlib[at + 3..at + 5].try_into().unwrap());
+            assert_eq!(complement, !length, "stored block length complement");
+            out.extend_from_slice(&zlib[at + 5..at + 5 + usize::from(length)]);
+            let is_last = header & 1 == 1;
+            at += 5 + usize::from(length);
+            if is_last {
+                break;
+            }
+        }
+        assert_eq!(
+            u32::from_be_bytes(zlib[at..at + 4].try_into().unwrap()),
+            adler32(&out),
+            "trailing Adler-32 must match the payload"
+        );
+        out
     }
 
     #[test]

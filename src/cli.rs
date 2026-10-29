@@ -37,6 +37,14 @@ pub struct Transform {
     pub pan: (f64, f64),
 }
 
+impl Transform {
+    /// Whether any of the view-changing options were actually given.
+    #[must_use]
+    pub fn requested(&self) -> bool {
+        self.zoom != 1.0 || self.center.is_some() || self.pan != (0.0, 0.0)
+    }
+}
+
 impl Default for Arguments {
     fn default() -> Self {
         Self {
@@ -206,7 +214,14 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
                 arguments.output = Output::Png(PathBuf::from(value));
             }
             other => {
-                if other.starts_with('-') && other != "-" {
+                // A leading '-' that is followed by a digit or a decimal point
+                // is a negative coordinate, not an option: rectangles such as
+                // "-0.77,-0.15,-0.73,-0.09" are the common case and must parse.
+                let is_negative_number = other.starts_with('-')
+                    && other.len() > 1
+                    && (other.as_bytes()[1].is_ascii_digit()
+                        || other.as_bytes()[1] == b'.');
+                if other.starts_with('-') && other != "-" && !is_negative_number {
                     return Err(Usage(format!("unknown option {other}")));
                 }
                 positionals.push(raw.clone());
@@ -226,21 +241,23 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
         }
     }
 
-    // An explicit rectangle is taken literally; --zoom is then applied about
-    // its centre, so `-c`/`-z` and a positional rectangle compose rather than
-    // fight. Aspect comes from the output grid, which is what stops a taller
-    // terminal from stretching the set.
-    let aspect = f64::from(arguments.width) / f64::from(arguments.height);
-    let view = arguments.view;
-    // Without --center, magnify about the middle of whatever rectangle we have,
-    // so an explicit rectangle and a --zoom compose instead of fighting.
-    let center = arguments.transform.center.unwrap_or((
-        (view.real_min + view.real_max) / 2.0,
-        (view.imaginary_min + view.imaginary_max) / 2.0,
-    ));
-    arguments.view = view
-        .zoomed(arguments.transform.zoom, center, aspect)
-        .panned(arguments.transform.pan.0, arguments.transform.pan.1);
+    // Applying a transform always re-derives the imaginary span from the output
+    // grid's aspect ratio, which crops the rectangle. So when nothing was asked
+    // for, the view is left exactly as given: the documented default must not
+    // silently become a crop of View::FULL.
+    if arguments.transform.requested() {
+        let aspect = f64::from(arguments.width) / f64::from(arguments.height);
+        let view = arguments.view;
+        // Without --center, magnify about the middle of whatever rectangle we
+        // have, so an explicit rectangle and --zoom compose instead of fighting.
+        let center = arguments.transform.center.unwrap_or((
+            (view.real_min + view.real_max) / 2.0,
+            (view.imaginary_min + view.imaginary_max) / 2.0,
+        ));
+        arguments.view = view
+            .zoomed(arguments.transform.zoom, center, aspect)
+            .panned(arguments.transform.pan.0, arguments.transform.pan.1);
+    }
 
     Ok(Some(arguments))
 }
@@ -374,11 +391,11 @@ mod tests {
 
     #[test]
     fn zoom_shrinks_the_view_about_its_centre() {
-        let parsed = parse(&args(&["-z", "2"])).expect("valid").expect("not help");
+        let parsed = parse(&args(&["-z", "0.5"])).expect("valid").expect("not help");
         let full = View::FULL;
         assert!(
-            (parsed.view.width() - full.width() / 2.0).abs() < 1e-12,
-            "zoom 2 should halve the width, got {}",
+            (parsed.view.width() - full.width() * 2.0).abs() < 1e-12,
+            "a magnification of 0.5 should double the width, got {}",
             parsed.view.width()
         );
         // Centred on the original midpoint, which is not the origin.
@@ -392,8 +409,11 @@ mod tests {
         let parsed = parse(&args(&["-c", "0,0", "-z", "10"]))
             .expect("valid")
             .expect("not help");
-        assert!(parsed.view.real_min.abs() < 1e-9 && parsed.view.real_max.abs() < 1e-9);
-        assert!(parsed.view.imaginary_min.abs() < 1e-9);
+        // The view is centred on the origin, so the span is symmetric about
+        // zero in both axes rather than collapsed to it.
+        assert!((parsed.view.real_min + parsed.view.real_max).abs() < 1e-9);
+        assert!((parsed.view.imaginary_min + parsed.view.imaginary_max).abs() < 1e-9);
+        assert!(parsed.view.real_min < 0.0 && parsed.view.real_max > 0.0);
     }
 
     #[test]
@@ -410,24 +430,33 @@ mod tests {
 
     #[test]
     fn pan_shifts_the_view() {
-        let parsed = parse(&args(&["-p", "0.25,0.0"]))
+        // Compare against the same view with the pan applied, since --pan
+        // implies the aspect-correcting transform as well.
+        let unpadded = parse(&args(&["-z", "1"])).expect("valid").expect("not help");
+        let panned = parse(&args(&["-z", "1", "-p", "0.25,0.0"]))
             .expect("valid")
             .expect("not help");
-        assert!(parsed.view.real_min > View::FULL.real_min);
+        assert!(panned.view.real_min > unpadded.view.real_min);
         assert!(
-            (parsed.view.imaginary_min - View::FULL.imaginary_min).abs() < 1e-12,
+            (panned.view.imaginary_min - unpadded.view.imaginary_min).abs() < 1e-12,
             "vertical pan was requested as zero"
         );
     }
 
     #[test]
     fn rectangle_and_zoom_compose() {
-        // A rectangle plus a magnification about its own centre.
+        // --zoom is a magnification, so a factor of 2 halves the span and keeps
+        // the rectangle's own centre fixed.
         let parsed = parse(&args(&["-0.8,-0.2,-0.6,0.0", "-z", "2"]))
             .expect("valid")
             .expect("not help");
-        assert!((parsed.view.width() - 0.1).abs() < 1e-12);
-        assert!((parsed.view.real_min + 0.75).abs() < 1e-12);
+        assert!(
+            (parsed.view.width() - 0.1).abs() < 1e-12,
+            "expected half of the 0.2-wide rectangle, got {}",
+            parsed.view.width()
+        );
+        let centre = (parsed.view.real_min + parsed.view.real_max) / 2.0;
+        assert!((centre + 0.7).abs() < 1e-12, "centre must stay put, got {centre}");
     }
 
     #[test]

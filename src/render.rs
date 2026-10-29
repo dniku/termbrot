@@ -51,15 +51,18 @@ pub fn text(view: &View, width: u32, height: u32, max_iter: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+use crate::escape;
 
     #[test]
     fn known_points_classify_correctly() {
-        // Origin is inside the set; 1+1i escapes on the second iteration.
-        assert_eq!(escape_time(0.0, 0.0, 100), u32::MAX);
-        assert_eq!(escape_time(1.0, 1.0, 100), 2);
-        // Real axis: [-2, 0.25] lies in the set, so 0.3 escapes.
-        assert_eq!(escape_time(-1.0, 0.0, 200), u32::MAX);
-        assert_ne!(escape_time(0.5, 0.0, 200), u32::MAX);
+        // Real axis: [-2, 1/4] lies in the set.
+        assert_eq!(escape_time(0.0, 0.0, 100), escape::INTERIOR);
+        assert_eq!(escape_time(-1.0, 0.0, 200), escape::INTERIOR);
+        assert_eq!(escape_time(-2.0, 0.0, 200), escape::INTERIOR);
+        // 1+i leaves the bailout disk as soon as |z| exceeds 2, which the
+        // reference and the fixed-point loop agree is iteration 1.
+        assert_eq!(escape_time(1.0, 1.0, 100), 1);
+        assert_ne!(escape_time(0.5, 0.0, 200), escape::INTERIOR);
     }
 
     #[test]
