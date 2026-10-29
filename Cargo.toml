@@ -1,0 +1,19 @@
+[package]
+name = "mandelbrot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Render the Mandelbrot set to a blocky terminal picture or a deterministic PNG"
+license = "MIT"
+
+
+[[bin]]
+name = "mandelbrot"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
