@@ -38,16 +38,22 @@ pub struct Transform {
 }
 
 impl Transform {
-    /// Whether any of the view-changing options were actually given.
+    /// Whether the view should be magnified, i.e. whether `--zoom` was given.
     ///
-    /// Exact float comparison is intended: these fields start at `1.0`/`0.0`
-    /// and only change through `--zoom`/`--pan`/`--center`, so "untouched" is
-    /// bit-identical. A tolerance would make `--zoom 1.0000001` read as
-    /// "not requested" and silently skip the aspect-correcting transform.
+    /// Exact float comparison is intended: these fields start at `1.0`/`0.0` and
+    /// only change through the command line, so "untouched" is bit-identical. A
+    /// tolerance would make `--zoom 1.0000001` read as "not requested".
     #[must_use]
     #[allow(clippy::float_cmp)]
-    pub fn requested(&self) -> bool {
-        self.zoom != 1.0 || self.center.is_some() || self.pan != (0.0, 0.0)
+    pub fn zoomed(&self) -> bool {
+        self.zoom != 1.0 || self.center.is_some()
+    }
+
+    /// Whether `--pan` was given with a non-zero shift.
+    #[must_use]
+    #[allow(clippy::float_cmp)]
+    pub fn panned(&self) -> bool {
+        self.pan != (0.0, 0.0)
     }
 }
 
@@ -250,18 +256,26 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
         }
     }
 
-    // Applying a transform always re-derives the imaginary span from the output
-    // grid's aspect ratio, which crops the rectangle. So when nothing was asked
-    // for, the view is left exactly as given: the documented default must not
-    // silently become a crop of View::FULL.
-    if arguments.transform.requested() {
+    // Magnifying re-derives the imaginary span from the output grid's aspect
+    // ratio, which crops the rectangle. That is intended for --zoom, where the
+    // user is reframing, but must not happen for --pan alone: shifting a view
+    // sideways should not silently clip its vertical extent.
+    let view = arguments.view;
+    if arguments.transform.zoomed() {
         let aspect = f64::from(arguments.width) / f64::from(arguments.height);
-        let view = arguments.view;
         // Without --center, magnify about the middle of whatever rectangle we
         // have, so an explicit rectangle and --zoom compose instead of fighting.
-        let center = arguments.transform.center.unwrap_or_else(|| view.center());
-        arguments.view = view
-            .zoomed(arguments.transform.zoom, center, aspect)
+        let center = arguments
+            .transform
+            .center
+            .unwrap_or_else(|| view.center());
+        arguments.view = view.zoomed(arguments.transform.zoom, center, aspect);
+    }
+    // Pan is a pure translation, so it composes with the above without changing
+    // the spans, and applies on its own when only --pan was given.
+    if arguments.transform.panned() {
+        arguments.view = arguments
+            .view
             .panned(arguments.transform.pan.0, arguments.transform.pan.1);
     }
 
@@ -443,12 +457,10 @@ mod tests {
 
     #[test]
     fn pan_shifts_the_view() {
-        // Compare against the same view with the pan applied, since --pan
-        // implies the aspect-correcting transform as well.
-        let unpadded = parse(&args(&["-z", "1"]))
-            .expect("valid")
-            .expect("not help");
-        let panned = parse(&args(&["-z", "1", "-p", "0.25,0.0"]))
+        // --pan alone must translate without cropping, so the baseline is the
+        // untouched default rather than a zoomed view.
+        let unpadded = parse(&args(&[])).expect("valid").expect("not help");
+        let panned = parse(&args(&["-p", "0.25,0.0"]))
             .expect("valid")
             .expect("not help");
         assert!(panned.view.real_min > unpadded.view.real_min);
@@ -458,6 +470,8 @@ mod tests {
             unpadded.view,
             panned.view,
         );
+        // A pure translation leaves the vertical extent alone entirely.
+        assert_eq!(panned.view.imaginary_max, View::FULL.imaginary_max);
     }
 
     #[test]
