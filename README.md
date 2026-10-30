@@ -27,7 +27,7 @@ $ mandelbrot -c -0.745,0.113 -z 250 -w 160 -h 80
 | `-w`, `--width` | Columns or pixels | 120 |
 | `-h`, `--height` | Rows or pixels | 60 |
 | `-i`, `--max-iter` | Iteration budget | 300 |
-| `-z`, `--zoom` | Magnification factor | 1 |
+| `-z`, `--zoom` | Magnification factor; larger shows less, in more detail | 1 |
 | `-c`, `--center` | Centre the view on `real,imaginary` | view centre |
 | `-p`, `--pan` | Shift by a fraction of the view size | 0,0 |
 | `-o`, `--output` | PNG destination; `-` means stdout | terminal |
@@ -41,19 +41,28 @@ $ nix test                 # unit tests, inside the sandbox
 $ nix flake check
 ```
 
-The crate has no dependencies outside the standard library, so the build declares
-no `cargoHash` and never contacts crates.io. `cargo build`, `cargo test`,
-`cargo clippy`, and `cargo fmt` all work directly too; see [Development](#development).
+The crate has no dependencies outside the standard library, so the build never
+contacts crates.io. `buildRustPackage` still requires one of
+`cargoHash`/`cargoVendorDir`/`cargoDeps`/`cargoLock`, so the package points
+`cargoVendorDir` at a checked-in empty `cargo-vendor/` directory: that states
+"nothing to vendor" honestly instead of inventing a hash nobody could check. Note
+that `cargoVendorDir` is read relative to the source root, not as a store path.
 
 ## How it works
 
 Escape times are computed in **fixed point**, not `f64`. A given
 `(real, imaginary, max_iter)` triple therefore yields the same iteration count on
 every machine and every build, which is what lets the rendering tests assert
-against hand-computed literals rather than golden images. Products accumulate in
-`i128`: with 30 fractional bits and coordinates clamped to four units, the widest
-intermediate `2·z_re·z_im` peaks at 2⁶⁴, so an `i64` accumulator would overflow
-exactly there.
+against hand-computed literals rather than golden images.
+
+The scale is 40 fractional bits, chosen by measurement rather than taste. At 30
+bits the orbit matches the reference almost everywhere, but a handful of
+near-boundary points compound the quantisation error over hundreds of iterations
+badly enough to change an escape count — and in one case to report a genuine set
+point as escaping. A deterministic 4 000-point sweep against arbitrary-precision
+arithmetic is clean at 40, and leaves roughly a millionfold margin before `i64`
+overflows. Products still accumulate in `i128`, since the squared terms alone
+exceed `i64` at that scale.
 
 | Module | Responsibility |
 | --- | --- |
@@ -84,6 +93,12 @@ $ nix develop
 $ cargo test                     # or cargo clippy --all-targets
 $ cargo fmt --check
 ```
+
+Flakes read the **committed** tree, not the working tree: an uncommitted change
+is invisible to `nix build`, so commit before validating or you will watch a stale
+derivation fail in the same way every time. `cargo check` reads the working tree,
+which makes the two disagree confusingly; `git status` should be clean when a Nix
+build is meant to reflect your edits.
 
 `rustfmt` and `clippy` run over the sources in CI-style checks:
 

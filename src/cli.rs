@@ -39,7 +39,13 @@ pub struct Transform {
 
 impl Transform {
     /// Whether any of the view-changing options were actually given.
+    ///
+    /// Exact float comparison is intended: these fields start at `1.0`/`0.0`
+    /// and only change through `--zoom`/`--pan`/`--center`, so "untouched" is
+    /// bit-identical. A tolerance would make `--zoom 1.0000001` read as
+    /// "not requested" and silently skip the aspect-correcting transform.
     #[must_use]
+    #[allow(clippy::float_cmp)]
     pub fn requested(&self) -> bool {
         self.zoom != 1.0 || self.center.is_some() || self.pan != (0.0, 0.0)
     }
@@ -104,7 +110,9 @@ RECTANGLE:
 /// Parse `small` as a positive integer, with a message naming the option.
 fn parse_positive(name: &str, value: &str) -> Result<u32, Usage> {
     let parsed: u32 = value.parse().map_err(|_| {
-        Usage(format!("{name} expects a non-negative integer, got {value:?}"))
+        Usage(format!(
+            "{name} expects a non-negative integer, got {value:?}"
+        ))
     })?;
     if parsed == 0 {
         return Err(Usage(format!("{name} must be at least 1")));
@@ -112,14 +120,18 @@ fn parse_positive(name: &str, value: &str) -> Result<u32, Usage> {
     Ok(parsed)
 }
 
+/// Largest accepted iteration budget.
+///
+/// Below `u32::MAX` by a wide margin because that value is the interior
+/// sentinel in [`crate::escape`], so it can never be a legitimate budget.
+const MAX_ITER_LIMIT: u32 = 100_000_000;
+
 /// Parse an iterator value, allowing a generous budget but refusing nonsense.
 fn parse_max_iter(value: &str) -> Result<u32, Usage> {
     let parsed = parse_positive("--max-iter", value)?;
-    // The u32::MAX sentinel marks interior points, so it is not usable here.
-    const LIMIT: u32 = 100_000_000;
-    if parsed >= LIMIT {
+    if parsed >= MAX_ITER_LIMIT {
         return Err(Usage(format!(
-            "--max-iter must be below {LIMIT}, got {value}"
+            "--max-iter must be below {MAX_ITER_LIMIT}, got {value}"
         )));
     }
     Ok(parsed)
@@ -156,18 +168,16 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
     let mut index = 0;
 
     // Consume a flag's value, supporting both `--width 10` and `--width=10`.
-    let take_value = |index: &mut usize,
-                          flag: &str,
-                          inline: Option<&str>|
-     -> Result<String, Usage> {
-        if let Some(value) = inline {
-            return Ok(value.to_string());
-        }
-        *index += 1;
-        args.get(*index).cloned().ok_or_else(|| {
-            Usage(format!("{flag} expects a value"))
-        })
-    };
+    let take_value =
+        |index: &mut usize, flag: &str, inline: Option<&str>| -> Result<String, Usage> {
+            if let Some(value) = inline {
+                return Ok(value.to_string());
+            }
+            *index += 1;
+            args.get(*index)
+                .cloned()
+                .ok_or_else(|| Usage(format!("{flag} expects a value")))
+        };
 
     while index < args.len() {
         let raw = &args[index];
@@ -191,9 +201,9 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
             }
             "-z" | "--zoom" => {
                 let value = take_value(&mut index, flag, inline)?;
-                let zoom: f64 = value.parse().map_err(|_| {
-                    Usage(format!("{flag} expects a number, got {value:?}"))
-                })?;
+                let zoom: f64 = value
+                    .parse()
+                    .map_err(|_| Usage(format!("{flag} expects a number, got {value:?}")))?;
                 if !(zoom.is_finite() && zoom > 0.0) {
                     return Err(Usage(format!(
                         "{flag} must be a positive finite number, got {value}"
@@ -219,8 +229,7 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
                 // "-0.77,-0.15,-0.73,-0.09" are the common case and must parse.
                 let is_negative_number = other.starts_with('-')
                     && other.len() > 1
-                    && (other.as_bytes()[1].is_ascii_digit()
-                        || other.as_bytes()[1] == b'.');
+                    && (other.as_bytes()[1].is_ascii_digit() || other.as_bytes()[1] == b'.');
                 if other.starts_with('-') && other != "-" && !is_negative_number {
                     return Err(Usage(format!("unknown option {other}")));
                 }
@@ -250,10 +259,7 @@ pub fn parse(args: &[String]) -> Result<Option<Arguments>, Usage> {
         let view = arguments.view;
         // Without --center, magnify about the middle of whatever rectangle we
         // have, so an explicit rectangle and --zoom compose instead of fighting.
-        let center = arguments.transform.center.unwrap_or((
-            (view.real_min + view.real_max) / 2.0,
-            (view.imaginary_min + view.imaginary_max) / 2.0,
-        ));
+        let center = arguments.transform.center.unwrap_or_else(|| view.center());
         arguments.view = view
             .zoomed(arguments.transform.zoom, center, aspect)
             .panned(arguments.transform.pan.0, arguments.transform.pan.1);
@@ -312,6 +318,7 @@ pub fn run(args: &[String], stdout: &mut impl Write) -> Result<i32, io::Error> {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)] // Parsed literals are compared to what parse produced.
 mod tests {
     use super::*;
 
@@ -357,9 +364,13 @@ mod tests {
 
     #[test]
     fn output_destination_is_recorded() {
-        let parsed = parse(&args(&["-o", "out.png"])).expect("valid").expect("not help");
+        let parsed = parse(&args(&["-o", "out.png"]))
+            .expect("valid")
+            .expect("not help");
         assert_eq!(parsed.output, Output::Png(PathBuf::from("out.png")));
-        let stdout = parse(&args(&["--output=-"])).expect("valid").expect("not help");
+        let stdout = parse(&args(&["--output=-"]))
+            .expect("valid")
+            .expect("not help");
         assert_eq!(stdout.output, Output::Png(PathBuf::from("-")));
     }
 
@@ -391,7 +402,9 @@ mod tests {
 
     #[test]
     fn zoom_shrinks_the_view_about_its_centre() {
-        let parsed = parse(&args(&["-z", "0.5"])).expect("valid").expect("not help");
+        let parsed = parse(&args(&["-z", "0.5"]))
+            .expect("valid")
+            .expect("not help");
         let full = View::FULL;
         assert!(
             (parsed.view.width() - full.width() * 2.0).abs() < 1e-12,
@@ -399,8 +412,8 @@ mod tests {
             parsed.view.width()
         );
         // Centred on the original midpoint, which is not the origin.
-        let center_real = (parsed.view.real_min + parsed.view.real_max) / 2.0;
-        let original_center = (full.real_min + full.real_max) / 2.0;
+        let center_real = parsed.view.center().0;
+        let original_center = full.center().0;
         assert!((center_real - original_center).abs() < 1e-12);
     }
 
@@ -432,7 +445,9 @@ mod tests {
     fn pan_shifts_the_view() {
         // Compare against the same view with the pan applied, since --pan
         // implies the aspect-correcting transform as well.
-        let unpadded = parse(&args(&["-z", "1"])).expect("valid").expect("not help");
+        let unpadded = parse(&args(&["-z", "1"]))
+            .expect("valid")
+            .expect("not help");
         let panned = parse(&args(&["-z", "1", "-p", "0.25,0.0"]))
             .expect("valid")
             .expect("not help");
@@ -455,8 +470,11 @@ mod tests {
             "expected half of the 0.2-wide rectangle, got {}",
             parsed.view.width()
         );
-        let centre = (parsed.view.real_min + parsed.view.real_max) / 2.0;
-        assert!((centre + 0.7).abs() < 1e-12, "centre must stay put, got {centre}");
+        let centre = parsed.view.center().0;
+        assert!(
+            (centre + 0.7).abs() < 1e-12,
+            "centre must stay put, got {centre}"
+        );
     }
 
     #[test]
@@ -478,8 +496,7 @@ mod tests {
     #[test]
     fn run_writes_a_picture_to_stdout() {
         let mut out = Vec::new();
-        let status = run(&args(&["-w", "20", "-h", "5", "-i", "30"]), &mut out)
-            .expect("io");
+        let status = run(&args(&["-w", "20", "-h", "5", "-i", "30"]), &mut out).expect("io");
         assert_eq!(status, 0);
         let text = String::from_utf8(out).expect("utf-8");
         assert_eq!(text.lines().count(), 5);

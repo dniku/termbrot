@@ -51,7 +51,7 @@ pub fn text(view: &View, width: u32, height: u32, max_iter: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-use crate::escape;
+    use crate::escape;
 
     #[test]
     fn known_points_classify_correctly() {
@@ -71,10 +71,7 @@ use crate::escape;
         // clearly nonzero share of its own frame. Anything near 0 or 1 means
         // the geometry or the interior sentinel is wrong.
         let buffer = pixels(&View::FULL, 120, 80, 300);
-        let interior = buffer
-            .chunks(3)
-            .filter(|pixel| *pixel == [0, 0, 0])
-            .count();
+        let interior = buffer.chunks(3).filter(|pixel| *pixel == [0, 0, 0]).count();
         let fraction = interior as f64 / (120 * 80) as f64;
         assert!(
             (0.02..0.20).contains(&fraction),

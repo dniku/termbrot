@@ -99,8 +99,7 @@ pub fn color(escape_time: u32, max_iter: u32) -> Rgb {
     if escape_time == INTERIOR {
         return [0, 0, 0];
     }
-    let index = (position(escape_time, max_iter) * RAMP_LEN as f64) as usize
-        % RAMP_LEN;
+    let index = (position(escape_time, max_iter) * RAMP_LEN as f64) as usize % RAMP_LEN;
     RAMP[index]
 }
 
@@ -110,9 +109,7 @@ pub fn glyph(escape_time: u32, max_iter: u32) -> char {
     if escape_time == INTERIOR {
         return '█';
     }
-    let index = (position(escape_time, max_iter) * SHADES.len() as f64)
-        as usize
-        % SHADES.len();
+    let index = (position(escape_time, max_iter) * SHADES.len() as f64) as usize % SHADES.len();
     SHADES[index]
 }
 
@@ -121,15 +118,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ramp_is_closed_and_in_gamut() {
-        // Every entry must be reachable and no channel may saturate outside
-        // 0..=255, which the integer blend clamps but could get wrong.
-        for entry in RAMP.iter() {
-            for channel in entry.iter() {
-                assert!(u8::try_from(*channel).is_ok());
-            }
-        }
+    fn ramp_starts_at_the_first_stop_and_stays_vivid() {
+        // Channel range needs no assertion: the table is [u8; _], so the manual
+        // clamp cannot produce an out-of-gamut value by construction. What
+        // *could* silently break is the interpolation, so check its shape: the
+        // ramp must begin at the first stop and must not collapse to a constant.
         assert_eq!(RAMP[0], STOPS[0], "ramp must start at the first stop");
+        let distinct = RAMP.windows(2).filter(|pair| pair[0] != pair[1]).count();
+        assert!(
+            distinct > RAMP_LEN / 2,
+            "ramp looks degenerate: only {distinct} of {} steps change colour",
+            RAMP_LEN - 1
+        );
     }
 
     #[test]
@@ -142,9 +142,7 @@ mod tests {
     fn early_escapes_are_darker_than_late_ones() {
         let early = color(1, 1000);
         let late = color(500, 1000);
-        let luminance = |p: Rgb| {
-            p[0] as i32 + p[1] as i32 + p[2] as i32
-        };
+        let luminance = |p: Rgb| p[0] as i32 + p[1] as i32 + p[2] as i32;
         assert!(
             luminance(early) < luminance(late),
             "early {early:?} should be darker than late {late:?}"

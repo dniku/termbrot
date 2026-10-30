@@ -51,7 +51,10 @@ pub const INTERIOR: u32 = u32::MAX;
 /// outside the set's bounding box. Callers filter with [`is_worth_iterating`]
 /// rather than letting [`f64::clamp`] silently relocate bad input.
 pub fn escape_time(re: f64, im: f64, max_iter: u32) -> u32 {
-    assert!(re.is_finite() && im.is_finite(), "coordinates must be finite");
+    assert!(
+        re.is_finite() && im.is_finite(),
+        "coordinates must be finite"
+    );
     let c_re = to_fixed(re);
     let c_im = to_fixed(im);
     assert!(
@@ -87,10 +90,7 @@ pub fn escape_time(re: f64, im: f64, max_iter: u32) -> u32 {
 /// Points outside it escape immediately and need not be iterated.
 #[must_use]
 pub fn is_worth_iterating(re: f64, im: f64) -> bool {
-    re.is_finite()
-        && im.is_finite()
-        && (-2.5..=1.0).contains(&re)
-        && (-2.0..=2.0).contains(&im)
+    re.is_finite() && im.is_finite() && (-2.5..=1.0).contains(&re) && (-2.0..=2.0).contains(&im)
 }
 
 /// Square a fixed-point coordinate in `i128` so the sum cannot overflow.
@@ -130,7 +130,9 @@ mod tests {
         // dependency, and a fixed seed means a failure is always reproducible.
         let mut state = 0x243F_6A88_85A3_08D3u64;
         let mut next = move || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             ((state >> 40) as f64) / ((1u64 << 24) as f64)
         };
 
@@ -138,6 +140,8 @@ mod tests {
         for _ in 0..4000 {
             let re = -2.4 + next() * 3.4;
             let im = -1.9 + next() * 3.8;
+            // `next()` is in 0.0..1.0 by construction, so the cast is a
+            // deliberate quantisation into 1..=600 rather than a truncation risk.
             let max_iter = 1 + (next() * 600.0) as u32;
             let fixed = escape_time(re, im, max_iter);
             let expected = reference(re, im, max_iter);

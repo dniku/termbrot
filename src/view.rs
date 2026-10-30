@@ -45,6 +45,19 @@ impl View {
         self.imaginary_max - self.imaginary_min
     }
 
+    /// The rectangle's centre, computed overflow-safely.
+    ///
+    /// `(min + max) / 2.0` overflows to infinity once both bounds are within a
+    /// factor of two of [`f64::MAX`], which deep panning can reach;
+    /// [`f64::midpoint`] avoids the intermediate sum.
+    #[must_use]
+    pub fn center(&self) -> (f64, f64) {
+        (
+            self.real_min.midpoint(self.real_max),
+            self.imaginary_min.midpoint(self.imaginary_max),
+        )
+    }
+
     /// Magnify by `magnification` about `center`, keeping `aspect` (width ÷ height).
     ///
     /// `magnification` is a magnification, so values above 1 show a smaller
@@ -129,13 +142,19 @@ impl View {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)] // Exact values, not accumulated arithmetic; see note per test.
 mod tests {
     use super::*;
 
     #[test]
     fn full_view_spans_the_set() {
-        assert!(View::FULL.real_min <= -2.0 && View::FULL.real_max >= 0.5);
-        assert!(View::FULL.imaginary_min <= -1.0 && View::FULL.imaginary_max >= 1.0);
+        // Asserted as a compile-time check because the bounds are literals: this
+        // catches an edit to FULL that would clip the set, without a runtime
+        // assertion clippy rightly calls constant.
+        const _: () = {
+            assert!(View::FULL.real_min <= -2.0 && View::FULL.real_max >= 0.5);
+            assert!(View::FULL.imaginary_min <= -1.0 && View::FULL.imaginary_max >= 1.0);
+        };
     }
 
     #[test]
@@ -184,12 +203,34 @@ mod tests {
     }
 
     #[test]
+    fn center_is_overflow_safe_where_naive_halving_is_not() {
+        // Bounds large enough that their sum saturates to infinity.
+        let huge = View {
+            real_min: f64::MAX / 1.5,
+            real_max: f64::MAX / 1.2,
+            imaginary_min: -1.0,
+            imaginary_max: 1.0,
+        };
+        assert!(
+            (huge.real_min + huge.real_max).is_infinite(),
+            "the naive sum must actually overflow for this test to mean anything"
+        );
+        let center = huge.center();
+        assert!(center.0.is_finite(), "midpoint must stay finite");
+        assert!(center.0 > huge.real_min && center.0 < huge.real_max);
+    }
+
+    #[test]
+    fn center_is_the_midpoint_in_the_ordinary_case() {
+        let center = View::FULL.center();
+        assert!((center.0 - (-0.75)).abs() < 1e-12);
+        assert!((center.1 - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
     fn pan_moves_by_fractions() {
         let view = View::FULL.panned(0.5, 0.0);
-        assert!(
-            (view.real_min - (View::FULL.real_min + View::FULL.width() * 0.5)).abs()
-                < 1e-12
-        );
+        assert!((view.real_min - (View::FULL.real_min + View::FULL.width() * 0.5)).abs() < 1e-12);
     }
 
     #[test]

@@ -1,11 +1,11 @@
 //! Minimal PNG encoder.
 //!
-//! Writes a colour-accurate 8-bit RGB PNG using *stored* DEFLATE blocks, i.e.
+//! Writes a colour-accurate 8-bit RGB PNG using `stored` DEFLATE blocks, i.e.
 //! no compression. That is a deliberate trade: a real Huffman encoder is a few
 //! hundred lines of table-building that this project does not need, and PNG's
 //! per-scanline filters already make smooth gradients compress well once a
 //! consumer re-encodes them. Output is standards-conformant, so `file`,
-//! ImageMagick, and browsers all accept it.
+//! `ImageMagick`, and browsers all accept it.
 
 use std::io::{self, Write};
 
@@ -48,14 +48,10 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 /// Write one PNG chunk: length, type, payload, CRC over type + payload.
-fn write_chunk(
-    output: &mut impl Write,
-    kind: &[u8; 4],
-    payload: &[u8],
-) -> io::Result<()> {
+fn write_chunk(output: &mut impl Write, kind: [u8; 4], payload: &[u8]) -> io::Result<()> {
     output.write_all(&(payload.len() as u32).to_be_bytes())?;
     let mut body = Vec::with_capacity(4 + payload.len());
-    body.extend_from_slice(kind);
+    body.extend_from_slice(&kind);
     body.extend_from_slice(payload);
     output.write_all(&body)?;
     output.write_all(&crc32(&body).to_be_bytes())
@@ -77,7 +73,7 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
     // CMF/FLG for deflate, 32 KiB window, no preset dictionary, FCHECK
     // adjusted so the two-byte header sums to a multiple of 31.
     let mut out = vec![0x78u8, 0x01];
-    // `chunks` yields nothing for an empty payload, so iterate over the blocks
+    // `slice::chunks` yields nothing for an empty payload, so walk the blocks
     // explicitly to guarantee exactly one final block in every case -- an empty
     // image still needs the terminating block a decoder looks for.
     let blocks = data.len().div_ceil(MAX_BLOCK).max(1);
@@ -91,7 +87,10 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
         out.extend_from_slice(&(!len).to_le_bytes());
         out.extend_from_slice(chunk);
     }
-    out.extend_from_slice(&adler32(data).to_le_bytes());
+    // zlib packs the Adler-32 trailer most-significant byte first (RFC 1950
+    // §2.2); the DEFLATE block lengths just above are little-endian, so the two
+    // endiannesses sit side by side and are easy to confuse.
+    out.extend_from_slice(&adler32(data).to_be_bytes());
     out
 }
 
@@ -105,12 +104,7 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
 ///
 /// Propagates I/O errors from `output`, and rejects dimensions that cannot
 /// produce a valid PNG.
-pub fn encode(
-    output: &mut impl Write,
-    width: u32,
-    height: u32,
-    pixels: &[u8],
-) -> io::Result<()> {
+pub fn encode(output: &mut impl Write, width: u32, height: u32, pixels: &[u8]) -> io::Result<()> {
     let expected = width as usize * height as usize * 3;
     if pixels.len() != expected {
         return Err(io::Error::new(
@@ -142,9 +136,9 @@ pub fn encode(
     ihdr.push(0); // compression: deflate
     ihdr.push(0); // filter: adaptive
     ihdr.push(0); // interlace: none
-    write_chunk(output, b"IHDR", &ihdr)?;
-    write_chunk(output, b"IDAT", &zlib_stored(&raw))?;
-    write_chunk(output, b"IEND", b"")
+    write_chunk(output, *b"IHDR", &ihdr)?;
+    write_chunk(output, *b"IDAT", &zlib_stored(&raw))?;
+    write_chunk(output, *b"IEND", b"")
 }
 
 #[cfg(test)]
@@ -211,7 +205,12 @@ mod tests {
             let mut body = Vec::with_capacity(4 + length);
             body.extend_from_slice(&kind);
             body.extend_from_slice(&payload);
-            assert_eq!(crc32(&body), crc, "{:?} chunk CRC", std::str::from_utf8(&kind));
+            assert_eq!(
+                crc32(&body),
+                crc,
+                "{:?} chunk CRC",
+                std::str::from_utf8(&kind)
+            );
             at = crc_start + 4;
             found.push((kind, payload));
         }
@@ -240,6 +239,10 @@ mod tests {
     }
 
     /// Strip a zlib stream of stored blocks back to its raw bytes.
+    ///
+    /// Block lengths are little-endian and the Adler-32 trailer big-endian, as
+    /// RFC 1950 requires; asserting both is what catches an encoder that mixes
+    /// them up.
     fn stored_payload(zlib: &[u8]) -> Vec<u8> {
         assert_eq!(zlib[0] & 0x0F, 8, "compression method: deflate");
         let mut at = 2;
@@ -262,6 +265,28 @@ mod tests {
             "trailing Adler-32 must match the payload"
         );
         out
+    }
+
+    #[test]
+    fn adler_trailer_is_big_endian_so_a_real_decoder_accepts_the_stream() {
+        // The block lengths are little-endian and the Adler-32 trailer is not,
+        // so writing both the same way produces a stream a conformant decoder
+        // rejects. Picking a payload whose Adler-32 is not byte-symmetric makes
+        // the two readings differ: 0x0068_003D against 0x3D00_6800.
+        let payload = [0u8, 10, 20, 30];
+        let checksum = adler32(&payload);
+        assert_ne!(
+            checksum,
+            checksum.swap_bytes(),
+            "test payload must distinguish the two endiannesses"
+        );
+        let encoded = zlib_stored(&payload);
+        let trailer_at = encoded.len() - 4;
+        assert_eq!(
+            u32::from_be_bytes(encoded[trailer_at..].try_into().unwrap()),
+            checksum,
+            "trailer must be big-endian, as RFC 1950 requires"
+        );
     }
 
     #[test]

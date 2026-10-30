@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
   outputs =
-    { self, nixpkgs, ... }:
+    { nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -20,14 +20,13 @@
         default = (pkgsFor system).callPackage ./mandelbrot.nix { };
       });
 
-      # `nix test` runs the unit tests inside the Nix sandbox, so linking and
-      # execution never depend on the host toolchain.
-      tests = forAllSystems (system: {
-        unit = self.packages.${system}.default.cargoTest;
-      });
+      # `nix build` runs the unit tests: mandelbrot.nix sets doCheck, so the
+      # test phase is part of building the package and needs no separate target.
+      # `nix flake check` additionally builds every system and runs the checks
+      # that come with the outputs above.
 
       # Same pinned toolchain as the package build, so `cargo test` in here
-      # agrees with `nix test`.
+      # agrees with the package's own test phase.
       devShells = forAllSystems (system: {
         default =
           let
