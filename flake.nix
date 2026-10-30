@@ -1,5 +1,5 @@
 {
-  description = "mandelbrot — render the Mandelbrot set as terminal art or a PNG";
+  description = "termbrot — render the Mandelbrot set as terminal art or a PNG";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -17,10 +17,10 @@
     in
     {
       packages = forAllSystems (system: {
-        default = (pkgsFor system).callPackage ./mandelbrot.nix { };
+        default = (pkgsFor system).callPackage ./termbrot.nix { };
       });
 
-      # `nix build` runs the unit tests: mandelbrot.nix sets doCheck, so the
+      # `nix build` runs the unit tests: termbrot.nix sets doCheck, so the
       # test phase is part of building the package and needs no separate target.
       # `nix flake check` additionally builds every system and runs the checks
       # that come with the outputs above.

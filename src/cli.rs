@@ -85,10 +85,10 @@ impl std::fmt::Display for Usage {
 }
 
 pub const USAGE: &str = "\
-mandelbrot — render the Mandelbrot set
+termbrot — render the Mandelbrot set
 
 USAGE:
-    mandelbrot [OPTIONS]
+    termbrot [OPTIONS]
 
 OPTIONS:
     -w, --width <N>      Columns or pixels          [default: 120]
@@ -105,12 +105,12 @@ RECTANGLE:
     positional argument to render an exact region, as
     real_min,imaginary_min,real_max,imaginary_max:
 
-        mandelbrot -0.77,-0.15,-0.73,-0.09
+        termbrot -0.77,-0.15,-0.73,-0.09
 
     Or combine --center and --zoom, which keeps the aspect ratio of the
     output grid and composes with --pan:
 
-        mandelbrot -c -0.75,-0.1 -z 40 -w 200 -h 100
+        termbrot -c -0.75,-0.1 -z 40 -w 200 -h 100
 ";
 
 /// Parse `small` as a positive integer, with a message naming the option.

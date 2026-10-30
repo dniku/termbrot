@@ -4,7 +4,7 @@
   rustPlatform,
 }:
 rustPlatform.buildRustPackage {
-  pname = "mandelbrot";
+  pname = "termbrot";
   version = "0.1.0";
 
   src = lib.fileset.toSource {
@@ -29,7 +29,7 @@ rustPlatform.buildRustPackage {
   meta = {
     description = "Render the Mandelbrot set to blocky terminal art or a PNG";
     license = lib.licenses.mit;
-    mainProgram = "mandelbrot";
+    mainProgram = "termbrot";
     platforms = lib.platforms.all;
   };
 }

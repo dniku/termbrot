@@ -17,8 +17,8 @@ $ cargo fmt --check
 Render smoke tests:
 
 ```console
-$ ./result/bin/mandelbrot -w 80 -h 30            # whole set, symmetric
-$ ./result/bin/mandelbrot -c -0.745,0.113 -z 60  # seahorse valley, real detail
-$ ./result/bin/mandelbrot -w 400 -h 280 -o frame.png
+$ ./result/bin/termbrot -w 80 -h 30            # whole set, symmetric
+$ ./result/bin/termbrot -c -0.745,0.113 -z 60  # seahorse valley, real detail
+$ ./result/bin/termbrot -w 400 -h 280 -o frame.png
 $ file frame.png                                 # expect: PNG image data, ... RGB
 ```

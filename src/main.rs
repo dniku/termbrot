@@ -1,4 +1,4 @@
-//! mandelbrot — render the Mandelbrot set as terminal art or a PNG.
+//! termbrot — render the Mandelbrot set as terminal art or a PNG.
 
 mod cli;
 mod escape;

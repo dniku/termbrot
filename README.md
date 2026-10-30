@@ -1,4 +1,4 @@
-# mandelbrot
+# termbrot
 
 Renders the Mandelbrot set as block-shade terminal art or a PNG, with no runtime dependencies outside the Rust standard library.
 
@@ -8,18 +8,18 @@ Built and tested entirely through Nix, so `nix test` works on a machine with no
 ## Usage
 
 ```console
-$ mandelbrot                                  # whole set, 120x60 blocks
-$ mandelbrot -c -0.75,-0.1 -z 40 -w 200       # seahorse valley
-$ mandelbrot -0.77,-0.15,-0.73,-0.09 -i 2000  # exact rectangle, more detail
-$ mandelbrot -w 1200 -h 800 -o mandelbrot.png # PNG
-$ mandelbrot -o - > frame.png                 # PNG to stdout
+$ termbrot                                  # whole set, 120x60 blocks
+$ termbrot -c -0.75,-0.1 -z 40 -w 200       # seahorse valley
+$ termbrot -0.77,-0.15,-0.73,-0.09 -i 2000  # exact rectangle, more detail
+$ termbrot -w 1200 -h 800 -o termbrot.png   # PNG
+$ termbrot -o - > frame.png                 # PNG to stdout
 ```
 
 The first positional argument is a rectangle, `real_min,imaginary_min,real_max,imaginary_max`.
 Alternatively give a centre and a magnification, which fits the region to the aspect ratio of the output grid:
 
 ```console
-$ mandelbrot -c -0.745,0.113 -z 250 -w 160 -h 80
+$ termbrot -c -0.745,0.113 -z 250 -w 160 -h 80
 ```
 
 | Option | Meaning | Default |
@@ -35,11 +35,13 @@ $ mandelbrot -c -0.745,0.113 -z 250 -w 160 -h 80
 ## Nix
 
 ```console
-$ nix build .#mandelbrot   # or just `nix build`
+$ nix build .#termbrot   # or just `nix build`
 $ nix run . -- -c -0.75,-0.1 -z 40
-$ nix test                 # unit tests, inside the sandbox
 $ nix flake check
 ```
+
+`nix build` runs the unit tests: `termbrot.nix` sets `doCheck`, so a test failure
+fails the build and there is no separate test target to remember.
 
 The crate has no dependencies outside the standard library, so the build never
 contacts crates.io. `buildRustPackage` still requires one of
@@ -63,6 +65,9 @@ point as escaping. A deterministic 4 000-point sweep against arbitrary-precision
 arithmetic is clean at 40, and leaves roughly a millionfold margin before `i64`
 overflows. Products still accumulate in `i128`, since the squared terms alone
 exceed `i64` at that scale.
+
+The binary is `termbrot`; the mathematics is still the Mandelbrot set, so prose
+about the set keeps its capitalisation.
 
 | Module | Responsibility |
 | --- | --- |
