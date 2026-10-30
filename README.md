@@ -16,7 +16,7 @@ $ mandelbrot -o - > frame.png                 # PNG to stdout
 ```
 
 The first positional argument is a rectangle, `real_min,imaginary_min,real_max,imaginary_max`.
-Alternatively give a centre and a magnification, which keeps the aspect ratio of the output grid:
+Alternatively give a centre and a magnification, which fits the region to the aspect ratio of the output grid:
 
 ```console
 $ mandelbrot -c -0.745,0.113 -z 250 -w 160 -h 80
@@ -29,7 +29,7 @@ $ mandelbrot -c -0.745,0.113 -z 250 -w 160 -h 80
 | `-i`, `--max-iter` | Iteration budget | 300 |
 | `-z`, `--zoom` | Magnification factor; larger shows less, in more detail | 1 |
 | `-c`, `--center` | Centre the view on `real,imaginary` | view centre |
-| `-p`, `--pan` | Shift by a fraction of the view size | 0,0 |
+| `-p`, `--pan` | Shift by a fraction of the view size, without cropping | 0,0 |
 | `-o`, `--output` | PNG destination; `-` means stdout | terminal |
 
 ## Nix
@@ -72,6 +72,11 @@ exceed `i64` at that scale.
 | `src/render.rs` | Grid sampling into glyphs or RGB bytes |
 | `src/png.rs` | PNG encoder |
 | `src/cli.rs` | Argument parsing and dispatch |
+
+`--zoom` and `--pan` are deliberately different operations. Magnifying reframes
+the view to the output grid's aspect ratio, which crops the rectangle; panning is
+a pure translation. Coupling them, as an earlier revision did, meant a horizontal
+`--pan` silently clipped the vertical extent.
 
 Two design choices are worth knowing about:
 
