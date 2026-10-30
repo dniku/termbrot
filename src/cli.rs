@@ -454,7 +454,9 @@ mod tests {
         assert!(panned.view.real_min > unpadded.view.real_min);
         assert!(
             (panned.view.imaginary_min - unpadded.view.imaginary_min).abs() < 1e-12,
-            "vertical pan was requested as zero"
+            "vertical pan was requested as zero: unpadded={:?} panned={:?}",
+            unpadded.view,
+            panned.view,
         );
     }
 
